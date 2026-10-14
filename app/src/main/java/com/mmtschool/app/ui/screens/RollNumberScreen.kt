@@ -1,0 +1,257 @@
+package com.mmtschool.app.ui.screens
+
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Badge
+import androidx.compose.material.icons.filled.Group
+import androidx.compose.material.icons.filled.School
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.unit.dp
+import androidx.navigation.NavHostController
+import coil.compose.AsyncImage
+import com.mmtschool.app.data.Result
+import com.mmtschool.app.data.School
+import com.mmtschool.app.data.SchoolRepository
+import com.mmtschool.app.data.UserPrefsRepository
+import com.mmtschool.app.data.UserRole
+import com.mmtschool.app.navigation.Routes
+import com.mmtschool.app.ui.AppTopBar
+import kotlinx.coroutines.launch
+
+/** Placeholder until a real staff-portal URL is provided. */
+private const val HARDCODED_STAFF_URL = "https://mmtschool.com/staff-portal"
+
+/**
+ * e.g. https://cards.glmps.in/  +  638  ->  https://cards.glmps.in/638
+ */
+fun buildFinalUrl(baseUrl: String, rollNumber: String): String {
+    val trimmedBase = baseUrl.trimEnd('/')
+    return "$trimmedBase/$rollNumber"
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun RollNumberScreen(
+    navController: NavHostController,
+    schoolDocId: String,
+    role: String,
+    repository: SchoolRepository = SchoolRepository()
+) {
+    val context = LocalContext.current
+    val prefsRepository = remember { UserPrefsRepository(context) }
+    val scope = rememberCoroutineScope()
+
+    var school by remember { mutableStateOf<School?>(null) }
+    var isLoading by remember { mutableStateOf(true) }
+    var errorMessage by remember { mutableStateOf<String?>(null) }
+    var rollNumber by remember { mutableStateOf("") }
+
+    LaunchedEffect(schoolDocId) {
+        val session = prefsRepository.getSessionOnce()
+        if (session != null && session.schoolDocId == schoolDocId) {
+            school = School(
+                docId = session.schoolDocId,
+                schoolName = session.schoolName,
+                logoURL = session.logoURL,
+                staffURL = session.staffURL,
+                studentURL = session.studentURL,
+                adminURL = session.adminURL,
+                type = session.type
+            )
+            isLoading = false
+        } else {
+            when (val result = repository.getSchoolById(schoolDocId)) {
+                is Result.Success -> {
+                    school = result.data
+                    result.data?.let { prefsRepository.savePendingSchool(it) }
+                    isLoading = false
+                }
+                is Result.Error -> {
+                    errorMessage = result.message
+                    isLoading = false
+                }
+            }
+        }
+    }
+
+    val isStaff = role == UserRole.STAFF.name
+    val roleLabel = if (isStaff) UserRole.STAFF.label else UserRole.STUDENT_PARENT.label
+    val roleIcon = if (isStaff) Icons.Default.Badge else Icons.Default.Group
+    val fieldLabel = if (isStaff) "Staff ID" else "Enter Admission Number / Username"
+
+    fun goToWebview(finalUrl: String) {
+        val currentSchool = school ?: return
+        scope.launch {
+            prefsRepository.saveRoleAndRollNumber(role, rollNumber.trim(), finalUrl)
+            navController.navigate(
+                Routes.webview(
+                    schoolDocId = currentSchool.docId,
+                    schoolName = currentSchool.schoolName,
+                    url = finalUrl,
+                    isFirstLogin = true
+                )
+            )
+        }
+    }
+
+    Scaffold(
+        topBar = {
+            AppTopBar(
+                title = "",
+                showBack = navController.previousBackStackEntry != null,
+                onBack = { navController.popBackStack() }
+            )
+        }
+    ) { padding ->
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(padding),
+            contentAlignment = Alignment.Center
+        ) {
+            when {
+                isLoading -> CircularProgressIndicator()
+                errorMessage != null -> Text("Error: $errorMessage")
+                school == null -> Text("School not found")
+                else -> {
+                    val currentSchool = school!!
+
+                    Column(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(horizontal = 24.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Spacer(Modifier.height(24.dp))
+
+                        Box(
+                            modifier = Modifier
+                                .size(80.dp)
+                                .clip(CircleShape)
+                                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.08f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            if (currentSchool.logoURL.isNotBlank()) {
+                                AsyncImage(
+                                    model = currentSchool.logoURL,
+                                    contentDescription = currentSchool.schoolName,
+                                    contentScale = ContentScale.Fit,
+                                    modifier = Modifier.size(64.dp).clip(CircleShape)
+                                )
+                            } else {
+                                Icon(Icons.Default.School, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(32.dp))
+                            }
+                        }
+
+                        Spacer(Modifier.height(14.dp))
+
+                        Text(
+                            currentSchool.schoolName,
+                            style = MaterialTheme.typography.titleLarge,
+                            fontWeight = FontWeight.Bold,
+                            textAlign = TextAlign.Center
+                        )
+
+                        Spacer(Modifier.height(8.dp))
+
+                        Row(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(50))
+                                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.10f))
+                                .padding(horizontal = 14.dp, vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(roleIcon, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text(
+                                "Logging in as $roleLabel",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.primary,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
+
+                        Spacer(Modifier.height(36.dp))
+
+                        Text(
+                            fieldLabel,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(start = 4.dp, bottom = 8.dp),
+                            textAlign = TextAlign.Start
+                        )
+
+                        OutlinedTextField(
+                            value = rollNumber,
+                            onValueChange = { rollNumber = it },
+                            placeholder = { Text("e.g. 638") },
+                            singleLine = true,
+                            shape = RoundedCornerShape(14.dp),
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Text),
+                            modifier = Modifier.fillMaxWidth()
+                        )
+
+                        Spacer(Modifier.height(24.dp))
+
+                        Button(
+                            onClick = {
+                                val baseUrl = if (isStaff) currentSchool.staffURL else currentSchool.studentURL
+                                goToWebview(buildFinalUrl(baseUrl, rollNumber.trim()))
+                            },
+                            enabled = rollNumber.isNotBlank(),
+                            shape = RoundedCornerShape(14.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(52.dp)
+                        ) {
+                            Text("Continue", style = MaterialTheme.typography.titleMedium)
+                        }
+
+//                        // Staff-only bypass: skip ID entry, open a hardcoded staff URL directly.
+//                        if (isStaff) {
+//                            Spacer(Modifier.height(16.dp))
+//                            Text(
+//                                "Open admin portal instead",
+//                                style = MaterialTheme.typography.bodyMedium.copy(textDecoration = TextDecoration.Underline),
+//                                color = MaterialTheme.colorScheme.primary,
+//                                modifier = Modifier.clickable {
+//                                    val currentSchool = school ?: return@clickable
+//                                    scope.launch {
+//                                        // Force rollNumber to be empty ("") so it ignores anything they typed
+//                                        prefsRepository.saveRoleAndRollNumber(role, "", currentSchool.adminURL)
+//
+//                                        navController.navigate(
+//                                            Routes.webview(
+//                                                schoolDocId = currentSchool.docId,
+//                                                schoolName = currentSchool.schoolName,
+//                                                url = currentSchool.adminURL,
+//                                                isFirstLogin = true
+//                                            )
+//                                        )
+//                                    }
+//                                }
+//                            )
+//                        }
+                    }
+                }
+            }
+        }
+    }
+}
